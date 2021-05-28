@@ -29,20 +29,23 @@
 #define TIM_DEBOUNCE_CMP        (655)   // ~20ms
 
 /**
- * @brief Long Press Compare value
+ * @brief Base time period unit
  *
- * Timer A1 is clocked by ACLK (32,768 Hz).
- * This value determines the threshold for a long button press.
+ * Timer A0 is clocked by ACLK (32,768 Hz).
  */
-#define TIM_LONG_PRESS_CMP      (9830) // ~300ms
+#define TIM_UNIT_PERIOD         (328)   // ~10ms
 
 /**
- * @brief Code pause value
- *
- * Timer A1 is clocked by ACLK (32,768 Hz).
- * This value determines the period between two different codes.
+ * @brief Number of base units required for button press
+ * to be considered long
  */
-#define TIM_PAUSE_CMP           (32768) // ~1000ms
+#define LONG_PRESS_UNITS        (30)    // ~300ms
+
+/**
+ * @brief Number of base units for a break
+ * between two characters
+ */
+#define BREAK_UNITS             (50)    // ~500ms
 
 /**
  * @brief UCBRx for 19200 baud rate with 1,048,576Hz clock
@@ -72,8 +75,7 @@ static inline void TA0_Init(void);
  *
  * ACLK is the clock source.
  * Capture/compare interrupts are enabled.
- * The timer is used for detecting long button presses,
- * and detecting pauses.
+ * The timer is used for measuring nutton state durations
  */
 static inline void TA1_Init(void);
 
@@ -178,12 +180,10 @@ static inline void TA1_Init(void)
     BIT_SET(TA1CTL, TASSEL__ACLK);
 
     // Configuring capture/compare registers
-    TA1CCR0 = TIM_PAUSE_CMP;
-    TA1CCR1 = TIM_LONG_PRESS_CMP;
+    TA1CCR0 = TIM_UNIT_PERIOD;
 
     // Enabling Capture/Compare interrupts
     BIT_SET(TA1CCTL0, CCIE);
-    BIT_SET(TA1CCTL1, CCIE);
 }
 
 
@@ -229,28 +229,6 @@ static inline void IOP_Init(void)
     BIT_SET(P1DIR, BIT2);               // P1.2 Output
 }
 
-/**
- * @brief Small inline function for terminating a code.
- *
- * Terminates the code string, resets dash and dot count, and sets
- * a flag that the current code is ready for decoding.
- */
-inline void terminate_code(void)
-{
-    code[dash_dot_count] = '\0';        // Terminating the code string
-    dash_dot_count = 0;                 // Reseting the counter
-    ready_to_decode = 1;                // Setting the flag
-}
-
-/**
- * @brief Small inline function for stopping and reseting TA1
- */
-inline void prepare_for_next_char(void)
-{
-    BIT_CLEAR(TA1CTL, (MC0 | MC1));     // Stopping TA1
-    BIT_SET(TA1CTL, TACLR);             // Reseting TA1
-}
-
 /*=====================================================================*/
 /* Interrupt Service Routines */
 /*=====================================================================*/
@@ -271,97 +249,16 @@ void __attribute__ ((interrupt(PORT2_VECTOR))) PORT2_ISR (void)
 }
 /**
  * @brief Timer A0 CCR0 Interrupt service routine
- *
- * Timer A0 works in UP mode, and this ISR will be executed when the timer
- * reaches value in CCR0. This ISR is used for button debouncing. If this
- * ISR executes before the duration of the previous button press was checked,
- * the previous button press was short, and this is also handled here.
  */
 void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
 {
-    if ((P2IN & BIT1) == 0)             // Button still pressed
-    {
-        prepare_for_next_char();        // Stop and reset TA1
-        BIT_CLEAR(P4OUT, BIT7);         // Keep LED2 off
 
-        // If a new button press happened before the last one's
-        // duration was checked, the last press was short
-        if (press_duration_checking_in_progress == 1) {
-            // Appending a dot to the code
-            code[dash_dot_count++] = '.';
-            // Clearing CCIFG in case there is interrupt pending while in this ISR
-            BIT_CLEAR(TA1CCTL1, CCIFG);
-            // If the code reached it's maximum length, terminate current code
-            if (dash_dot_count == MAX_CODE_LENGTH){
-                terminate_code();
-                BIT_SET(P4OUT, BIT7);   // Turning LED2 on
-            }
-        }
-
-        // Starting TA1 for timing the button press duration checking
-        BIT_SET(TA1CTL, MC__UP);
-
-        // Setting a flag, so if a new button press comes in before
-        // the duration is checked, that means that the press was short, and
-        // the last checking can be terminated
-        press_duration_checking_in_progress = 1;
-    }
-
-    BIT_CLEAR(TA0CTL, (MC0 | MC1));     // Stopping TA0
-    BIT_SET(TA0CTL, TACLR);             // Reseting TA0
-    BIT_CLEAR(P2IFG, BIT1);             // Clearing the flag
-    BIT_SET(P2IE, BIT1);                // Enabling interrupts on P1.4
-}
-
-/**
- * @brief Timer A1 CCR1 Interrupt service routine
- *
- * This ISR will be executed when TA1 reaches the value of CCR1.
- * If this value is reached, state of the button is tested, to check
- * if the button press was long or not. Additionally, if the current code
- * length is the maximum possible, code is terminated, and there will be
- * no waiting for the necessary pause.
- */
-void __attribute__ ((interrupt(TIMER1_A1_VECTOR))) TA1CCR_ISR (void)
-{
-    if (TA1IV == TA1IV_TA1CCR1)
-    {
-        // If the button is still pressed after the given time,
-        // the button press was long so the input was dash,
-        // otherwise the input was a dot.
-        input = ((P2IN & BIT1) == 0) ? '-' : '.';
-
-        // Turning LD3 on to signal that long press was detected
-        if (input == '-') BIT_SET(P1OUT, BIT2);
-
-        // Appending the last input to the code
-        code[dash_dot_count++] = input;
-
-        // If the code reached it's maximum length, terminate current code,
-        // and prepare for next character
-        if (dash_dot_count == MAX_CODE_LENGTH)
-        {
-            prepare_for_next_char();    // Stop and reset TA1
-            terminate_code();           // Set flags, terminate string
-            BIT_SET(P4OUT, BIT7);       // Turning LED2 on
-        }
-
-        // Clearing the flag since the duration was checked
-        press_duration_checking_in_progress = 0;
-    }
 }
 
 /**
  * @brief Timer A1 CCR0 Interrupt service routine
- *
- * Timer A1 works in UP mode, and this ISR will be executed when the timer
- * reaches value in CCR0. If this value is reached, this means that there
- * were no button presses for the given amount of time, and this is the end
- * of the current code.
  */
 void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) TA1CCR0_ISR (void)
 {
-    prepare_for_next_char();            // Stop and reset TA1
-    terminate_code();                   // Set flags, terminate string
-    BIT_SET(P4OUT, BIT7);               // Turning LED2 on
+
 }
