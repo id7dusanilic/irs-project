@@ -103,12 +103,13 @@ static inline void IOP_Init(void);
 /*=====================================================================*/
 
 // Statuses and flags
-unsigned int press_duration_checking_in_progress = 0;
-unsigned int dash_dot_count = 0;
+unsigned int press_count = 0;
 unsigned int ready_to_decode = 0;
+unsigned int timing_in_progress = 0;
 
-// Characters and codes
-char input;
+unsigned int low_count  = 0;
+unsigned int high_count = 0;
+
 char code[MAX_CODE_LENGTH+1];
 
 /*=====================================================================*/
@@ -252,7 +253,20 @@ void __attribute__ ((interrupt(PORT2_VECTOR))) PORT2_ISR (void)
  */
 void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
 {
-
+    if ((P2IN & BIT1) == 0)             // Button S1 pressed
+    {
+        if (timing_in_progress == 1)
+        {
+            BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
+            BIT_SET(TA1CTL, TACLR);         // Reseting TA1
+            low_count = 0;                  // Reseting low count
+            high_count = 0;                 // Reseting high count
+        }
+        BIT_SET(TA1CTL, MC__UP);        // Starting TA1 in up mode
+        timing_in_progress = 1;
+        BIT_CLEAR(TA0CTL, (MC0 | MC1)); // Stopping TA0
+        BIT_SET(TA0CTL, TACLR);         // Reseting TA0
+    }
 }
 
 /**
@@ -260,5 +274,38 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
  */
 void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) TA1CCR0_ISR (void)
 {
+    const unsigned int press_over_threshold = 3;
 
+    if ((P2IN & BIT1) == 0) low_count++;
+    else high_count++;
+
+    if (high_count == BREAK_UNITS)
+    {
+        BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
+        BIT_SET(TA1CTL, TACLR);         // Reseting TA1
+        low_count = 0;                  // Reseting low count
+        high_count = 0;                 // Reseting high count
+        code[press_count] = '\0';
+        press_count = 0;
+        ready_to_decode = 1;            // Setting the flag
+        timing_in_progress = 0;         // Finished timing
+    }
+    else if (high_count == press_over_threshold)
+    {
+        BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
+        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P1.4
+
+        code[press_count++] = (low_count > LONG_PRESS_UNITS) ? '-' : '.';
+        if (press_count == MAX_CODE_LENGTH)
+        {
+            code[press_count] = '\0';
+            press_count = 0;
+            BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
+            BIT_SET(TA1CTL, TACLR);         // Reseting TA1
+            low_count = 0;                  // Reseting low count
+            high_count = 0;                 // Reseting high count
+            ready_to_decode = 1;            // Setting the flag
+            timing_in_progress = 0;
+        }
+    }
 }
