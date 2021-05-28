@@ -1,3 +1,13 @@
+/*
+ * @file morse.c
+ *
+ * Contains the implementation for a function for decoding
+ * Morse code to ASCII
+ *
+ * @author Dusan Ilic
+ * @date 2021
+ */
+
 #include "morse.h"
 #include <stdint.h>
 
@@ -30,6 +40,11 @@ char *codes[] = {
     "--..",         // Z
 };
 
+/**
+ * @brief Compares two strings for equality
+ *
+ * Returns 1 if the strings are identical
+ */
 int strcmp(const char *x, const char *y)
 {
 	while (*x)
