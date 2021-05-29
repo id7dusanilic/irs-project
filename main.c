@@ -105,12 +105,12 @@ static inline void IOP_Init(void);
 /*=====================================================================*/
 
 // Statuses and flags
-unsigned int press_count = 0;
-unsigned int ready_to_decode = 0;
-unsigned int timing_in_progress = 0;
+uint16_t press_count = 0;
+uint16_t ready_to_decode = 0;
+uint16_t timing_in_progress = 0;
 
-unsigned int low_count  = 0;
-unsigned int high_count = 0;
+uint16_t low_count  = 0;
+uint16_t high_count = 0;
 
 char code[MAX_CODE_LENGTH+1];
 
@@ -266,48 +266,6 @@ inline void end_code(void)
 /*=====================================================================*/
 /* Interrupt Service Routines */
 /*=====================================================================*/
-
-/**
- * @brief PORT2 Interrupt Service Routine
- *
- * If falling edge occurred on button S1, starts the timer for debouncing
- */
-void __attribute__ ((interrupt(PORT2_VECTOR))) PORT2_ISR (void)
-{
-    if ((P2IFG & BIT1) != 0)            // Button S1 event
-    {
-        BIT_CLEAR(P2IE, BIT1);          // Disabling interrupts on P2.1
-        BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
-        BIT_SET(TA0CTL, MC__UP);        // Starting TA0 in up mode
-    }
-}
-/**
- * @brief Timer A0 CCR0 Interrupt service routine
- *
- * Debounces button S1. If the button is pressed, timing process is started,
- * and previous (if running) is stopped.
- */
-void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
-{
-    if ((P2IN & BIT1) == 0)             // Button S1 pressed
-    {
-        // If there was a timing session running when pressing the
-        // button, first end the current session
-        if (timing_in_progress == 1)
-            end_timing();
-        BIT_SET(TA1CTL, MC__UP);        // Starting TA1 in up mode
-        timing_in_progress = 1;         // New timing session starting
-        BIT_CLEAR(P4OUT, BIT7);         // Turning the LED2 off to signal
-                                        // that there is a code in progress
-    }
-    else
-    {
-        BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
-        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P2.1
-    }
-    BIT_CLEAR(TA0CTL, (MC0 | MC1));     // Stopping TA0
-    BIT_SET(TA0CTL, TACLR);             // Reseting TA0
-}
 
 /**
  * @brief Timer A1 CCR0 Interrupt service routine
