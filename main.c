@@ -120,7 +120,7 @@ char code[MAX_CODE_LENGTH+1];
  * @brief Main function
  *
  * Initializes all the necessary peripherals, and then waits
- *  for a flag to be set to transmit the decoded character via UART
+ * for a flag to be set to transmit the decoded character via UART
  */
 int main(void)
 {
@@ -142,8 +142,11 @@ int main(void)
         if ((P2IN & BIT1) == 0) BIT_SET(P1OUT, BIT0);
         else BIT_CLEAR(P1OUT, BIT0);
 
-        // Keeping the LD3 off while the button is not pressed
-        if ((P2IN & BIT1) != 0) BIT_CLEAR(P1OUT, BIT2);
+        // Turning on the LD3 when long press is detected and
+        // button is still pressed
+        if (((P2IN & BIT1) == 0) && (low_count > LONG_PRESS_UNITS))
+            BIT_SET(P1OUT, BIT2);
+        else BIT_CLEAR(P1OUT, BIT2);
 
         // If the flag was set, decode the input and send
         // the decoded output via UART
@@ -230,6 +233,21 @@ static inline void IOP_Init(void)
     BIT_SET(P1DIR, BIT2);               // P1.2 Output
 }
 
+/**
+ * @brief Ends a timing session
+ *
+ * Stops and resets TA1, and reseting counters. This is called
+ * either when pause was detected, or a new press came while waiting
+ * for a pause.
+ */
+inline void end_timing(void)
+{
+    BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
+    BIT_SET(TA1CTL, TACLR);         // Reseting TA1
+    low_count = 0;                  // Reseting low count
+    high_count = 0;                 // Reseting high count
+}
+
 /*=====================================================================*/
 /* Interrupt Service Routines */
 /*=====================================================================*/
@@ -264,9 +282,9 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
         }
         BIT_SET(TA1CTL, MC__UP);        // Starting TA1 in up mode
         timing_in_progress = 1;
-        BIT_CLEAR(TA0CTL, (MC0 | MC1)); // Stopping TA0
-        BIT_SET(TA0CTL, TACLR);         // Reseting TA0
     }
+    BIT_CLEAR(TA0CTL, (MC0 | MC1)); // Stopping TA0
+    BIT_SET(TA0CTL, TACLR);         // Reseting TA0
 }
 
 /**
@@ -296,6 +314,7 @@ void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) TA1CCR0_ISR (void)
         BIT_SET(P2IE, BIT1);            // Enabling interrupts on P1.4
 
         code[press_count++] = (low_count > LONG_PRESS_UNITS) ? '-' : '.';
+        low_count = 0;                  // Reseting low count
         if (press_count == MAX_CODE_LENGTH)
         {
             code[press_count] = '\0';
