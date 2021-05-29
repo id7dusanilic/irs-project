@@ -1,3 +1,11 @@
+/**
+ * @file defines.h
+ * @brief Defines some commonly used macros.
+ *
+ * @author Dusan Ilic
+ * @date 2021
+ */
+
 #ifndef DEFINES_H_
 #define DEFINES_H_
 

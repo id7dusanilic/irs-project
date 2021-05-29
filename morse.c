@@ -43,7 +43,7 @@ char *codes[] = {
 /**
  * @brief Compares two strings for equality
  *
- * Returns 1 if the strings are identical
+ * Returns 1 if the strings are identical, o otherwise
  */
 int strcmp(const char *x, const char *y)
 {
