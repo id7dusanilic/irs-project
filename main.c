@@ -260,7 +260,7 @@ inline void end_code(void)
     press_count = 0;                    // Reseting press count
     ready_to_decode = 1;                // Setting the flag
     BIT_SET(P4OUT, BIT7);               // Turning the LED2 on to signal
-                                        // that new code can be inputed
+                                        // that new code can start
 }
 
 /*=====================================================================*/
@@ -276,7 +276,7 @@ void __attribute__ ((interrupt(PORT2_VECTOR))) PORT2_ISR (void)
 {
     if ((P2IFG & BIT1) != 0)            // Button S1 event
     {
-        BIT_CLEAR(P2IE, BIT1);          // Disabling interrupts on P1.4
+        BIT_CLEAR(P2IE, BIT1);          // Disabling interrupts on P2.1
         BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
         BIT_SET(TA0CTL, MC__UP);        // Starting TA0 in up mode
     }
@@ -298,12 +298,12 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
         BIT_SET(TA1CTL, MC__UP);        // Starting TA1 in up mode
         timing_in_progress = 1;         // New timing session starting
         BIT_CLEAR(P4OUT, BIT7);         // Turning the LED2 off to signal
-                                        // that there is a code being inputed
+                                        // that there is a code in progress
     }
     else
     {
         BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
-        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P1.4
+        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P2.1
     }
     BIT_CLEAR(TA0CTL, (MC0 | MC1));     // Stopping TA0
     BIT_SET(TA0CTL, TACLR);             // Reseting TA0
@@ -334,7 +334,7 @@ void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) TA1CCR0_ISR (void)
     if (high_count == press_over_threshold)
     {
         BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
-        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P1.4
+        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P2.1
 
         // Appending a dash or a dot to the code
         code[press_count++] = (low_count > LONG_PRESS_UNITS) ? '-' : '.';
