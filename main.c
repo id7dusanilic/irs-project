@@ -42,10 +42,10 @@
 #define LONG_PRESS_UNITS        (30)    // ~300ms
 
 /**
- * @brief Number of base units for a break
+ * @brief Number of base units for a pause
  * between two characters
  */
-#define BREAK_UNITS             (50)    // ~500ms
+#define PAUSE_UNITS             (50)    // ~500ms
 
 /**
  * @brief UCBRx for 19200 baud rate with 1,048,576Hz clock
@@ -65,7 +65,8 @@
  * @brief Timer A0 Initialization
  *
  * ACLK is the clock source.
- * Capture/compare interrupts are enabled.
+ * CCR0 interrupts are enabled.
+ * Timer is used in UP mode.
  * The timer is used for button debouncing.
  */
 static inline void TA0_Init(void);
@@ -74,8 +75,9 @@ static inline void TA0_Init(void);
  * @brief Timer A1 Initialization
  *
  * ACLK is the clock source.
- * Capture/compare interrupts are enabled.
- * The timer is used for measuring nutton state durations
+ * CCR0 interrupts are enabled.
+ * Timer is used in UP mode.
+ * The timer is used for measuring button state durations
  */
 static inline void TA1_Init(void);
 
@@ -91,7 +93,7 @@ static inline void USCI_A1_Init(void);
  * @brief IOP Initialization
  *
  * Initializes P2.1 (Button S1) as an input with falling
- *  edge interrupts enabled.
+ * edge interrupts enabled.
  * Initializes P1.0 (LED LED1) as an output.
  * Initializes P4.7 (LED LED2) as an output.
  * Initializes P1.2 (LED LD3) as an output.
@@ -236,16 +238,29 @@ static inline void IOP_Init(void)
 /**
  * @brief Ends a timing session
  *
- * Stops and resets TA1, and reseting counters. This is called
+ * Stops and resets TA1, and resets counters. This is called
  * either when pause was detected, or a new press came while waiting
- * for a pause.
+ * for a pause, or the maximum code length was reached.
  */
 inline void end_timing(void)
 {
-    BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
-    BIT_SET(TA1CTL, TACLR);         // Reseting TA1
-    low_count = 0;                  // Reseting low count
-    high_count = 0;                 // Reseting high count
+    BIT_CLEAR(TA1CTL, (MC0 | MC1));     // Stopping TA1
+    BIT_SET(TA1CTL, TACLR);             // Reseting TA1
+    low_count = 0;                      // Reseting low count
+    high_count = 0;                     // Reseting high count
+    timing_in_progress = 0;             // Reseting the flag
+}
+
+/**
+ * @brief Ends a code and sets a ready for decoding flag
+ */
+inline void end_code(void)
+{
+    code[press_count] = '\0';           // Terminating the code string
+    press_count = 0;                    // Reseting press count
+    ready_to_decode = 1;                // Setting the flag
+    BIT_SET(P4OUT, BIT7);               // Turning the LED2 on to signal
+                                        // that new code can be inputed
 }
 
 /*=====================================================================*/
@@ -268,63 +283,79 @@ void __attribute__ ((interrupt(PORT2_VECTOR))) PORT2_ISR (void)
 }
 /**
  * @brief Timer A0 CCR0 Interrupt service routine
+ *
+ * Debounces button S1. If the button is pressed, timing process is started,
+ * and previous (if running) is stopped.
  */
 void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TA0CCR0_ISR (void)
 {
     if ((P2IN & BIT1) == 0)             // Button S1 pressed
     {
+        // If there was a timing session running when pressing the
+        // button, first end the current session
         if (timing_in_progress == 1)
-        {
-            BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
-            BIT_SET(TA1CTL, TACLR);         // Reseting TA1
-            low_count = 0;                  // Reseting low count
-            high_count = 0;                 // Reseting high count
-        }
+            end_timing();
         BIT_SET(TA1CTL, MC__UP);        // Starting TA1 in up mode
-        timing_in_progress = 1;
+        timing_in_progress = 1;         // New timing session starting
+        BIT_CLEAR(P4OUT, BIT7);         // Turning the LED2 off to signal
+                                        // that there is a code being inputed
     }
-    BIT_CLEAR(TA0CTL, (MC0 | MC1)); // Stopping TA0
-    BIT_SET(TA0CTL, TACLR);         // Reseting TA0
+    else
+    {
+        BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
+        BIT_SET(P2IE, BIT1);            // Enabling interrupts on P1.4
+    }
+    BIT_CLEAR(TA0CTL, (MC0 | MC1));     // Stopping TA0
+    BIT_SET(TA0CTL, TACLR);             // Reseting TA0
 }
 
 /**
  * @brief Timer A1 CCR0 Interrupt service routine
+ *
+ * Used for timing button press and release durations. When the button is
+ * released, new button press detections are enabled, the press duration is
+ * evaluated, and the code is ended if pause was detected, or the maximum
+ * length of code is reached.
  */
 void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) TA1CCR0_ISR (void)
 {
+    // If button state is inactive for this number of time units,
+    // the button is considered to be released
     const unsigned int press_over_threshold = 3;
 
+    // Updating button state counters
     if ((P2IN & BIT1) == 0) low_count++;
     else high_count++;
 
-    if (high_count == BREAK_UNITS)
-    {
-        BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
-        BIT_SET(TA1CTL, TACLR);         // Reseting TA1
-        low_count = 0;                  // Reseting low count
-        high_count = 0;                 // Reseting high count
-        code[press_count] = '\0';
-        press_count = 0;
-        ready_to_decode = 1;            // Setting the flag
-        timing_in_progress = 0;         // Finished timing
-    }
-    else if (high_count == press_over_threshold)
+
+    // If the button was released, enable new interrupts on the button, so new
+    // presses can be detected. Also append to the current code ('-' or '.'),
+    // depending on the button press duration
+    if (high_count == press_over_threshold)
     {
         BIT_CLEAR(P2IFG, BIT1);         // Clearing the flag
         BIT_SET(P2IE, BIT1);            // Enabling interrupts on P1.4
 
+        // Appending a dash or a dot to the code
         code[press_count++] = (low_count > LONG_PRESS_UNITS) ? '-' : '.';
-        low_count = 0;                  // Reseting low count
+
+        // Reseting the low count, so the status LED LD3 can be turned off
+        low_count = 0;
+
+        // If the maximum code length was reached, terminate the code
         if (press_count == MAX_CODE_LENGTH)
         {
-            code[press_count] = '\0';
-            press_count = 0;
-            BIT_CLEAR(TA1CTL, (MC0 | MC1)); // Stopping TA1
-            BIT_SET(TA1CTL, TACLR);         // Reseting TA1
-            low_count = 0;                  // Reseting low count
-            high_count = 0;                 // Reseting high count
-            ready_to_decode = 1;            // Setting the flag
-            timing_in_progress = 0;
+            end_timing();
+            end_code();
         }
+    }
+
+    // If the button is not pressed in the given amount of time, pause between
+    // codes is detected, so the current code is ended and so is the timing
+    // session.
+    if (high_count == PAUSE_UNITS)
+    {
+        end_timing();
+        end_code();
     }
 }
