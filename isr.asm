@@ -31,7 +31,9 @@ port2_isr_ret   reti
 ; Debounces button S1. If the button is pressed, timing process is started,
 ; and previous (if running) is stopped.
 ;--------------------------------------------------------------------------------------
-TA0CCR0_ISR     bit.b   #BIT1, &P2IN                ; Testing if button S1 is pressed
+TA0CCR0_ISR     bic.w   #0x0030, &TA0CTL            ; Stopping TA0
+                bis.w   #TACLR, &TA0CTL             ; Reseting TA0
+                bit.b   #BIT1, &P2IN                ; Testing if button S1 is pressed
                 jnz     not_pressed
 pressed         bit.w   #BIT1, &timing_in_progress  ; If there was a timing session
                 jz      start_timing                ; running when pressing the button
@@ -47,9 +49,7 @@ start_timing    bis.w   #MC__UP, &TA1CTL            ; Starting TA1 in up mode
                 jmp     ta0ccr0_isr_ret
 not_pressed     bic.b   #BIT1, &P2IFG               ; Clearing the flag
                 bis.b   #BIT1, &P2IE                ; Enabling interrupts on P2.1
-ta0ccr0_isr_ret bic.w   #0x0030, &TA0CTL            ; Stopping TA0
-                bis.w   #TACLR, &TA0CTL             ; Reseting TA0
-                reti
+ta0ccr0_isr_ret reti
 
 ;-------------------------------------------------------------------------------
 ; Interrupt Vectors
