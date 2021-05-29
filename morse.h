@@ -20,6 +20,9 @@
  * Input is a string containing '-' and '.' (dash and dot)
  * Returns the decoded ASCII character. If not recognized
  * returns '*'
+ *
+ * @param code string Morse code (containing '.' and '-') to decode to ASCII
+ * @return ASCII Code
  */
 extern char morse_to_ascii(const char* code);
 
